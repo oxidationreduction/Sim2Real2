@@ -5,8 +5,8 @@
       <sourceFolder url="file://$MODULE_DIR$/CEM/ManiSkill2" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/where2act/Pointnet2_PyTorch" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/CEM/ManiSkill2-Learn" isTestSource="false" />
-      <excludeFolder url="file://$MODULE_DIR$/ditto/data" />
       <excludeFolder url="file://$MODULE_DIR$/ditto/logs" />
+      <excludeFolder url="file://$MODULE_DIR$/ditto/data" />
     </content>
     <orderEntry type="jdk" jdkName="CEM" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />
