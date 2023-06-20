@@ -4,10 +4,12 @@ from typing import Dict
 
 import numpy as np
 import sapien.core as sapien
+import trimesh
 
 from sapien.core import Pose
 
 from mani_skill2.agents.camera import get_camera_pcd
+from mani_skill2.envs.fixed_xmate3_allegro_env import FixedXmate3RobotiqAllegroEnv
 from mani_skill2.envs.fixed_xmate3_env import (
     FixedXmate3RobotiqEnv,
 )
@@ -30,7 +32,7 @@ from mani_skill2.utils.tmu import register_gym_env_for_tmu
 
 @register_gym_env("CEM-allegro-v0", max_episode_steps=500)
 # @register_gym_env_for_tmu("CEM_@-v0")
-class CEMEnv(FixedXmate3RobotiqEnv):
+class CEMAllegroEnv(FixedXmate3RobotiqAllegroEnv):
     # SUPPORTED_OBS_MODES = ("state", "state_dict", "rgbd", "pointcloud")
     SUPPORTED_OBS_MODES = ("state", "state_dict")
     SUPPORTED_REWARD_MODES = ("dense", "sparse")
@@ -49,55 +51,70 @@ class CEMEnv(FixedXmate3RobotiqEnv):
             reward_mode=None,
             sim_freq=500,
             control_freq=20,
+            thresh_lambda=-5
     ):
         super().__init__(
             articulation_config_path, obs_mode, reward_mode, sim_freq, control_freq
         )
+        self.thresh_lambda = thresh_lambda
 
     def _initialize_articulation(self):
-        root_pos = self._articulation_config.root_pos
-        rot_z = np.sin(self._articulation_config.root_ang / 2)
-        self._articulation.set_root_pose(
-            Pose(
-                root_pos,
-                [np.sqrt(1 - rot_z ** 2), 0, 0, rot_z],
+        def set_articulation_root_pose():
+            # digital twin root pose
+            root_pos = self._articulation_config.root_pos
+            # digital twin rotation around z-axis
+            rot_z = np.sin(self._articulation_config.root_ang / 2)
+            self._articulation.set_root_pose(
+                Pose(
+                    root_pos,
+                    [np.sqrt(1 - rot_z ** 2), 0, 0, rot_z],
+                )
             )
-        )
+        def set_articulation_qpos():
+            [[lmin, lmax]] = self._target_joint.get_limits()
+            qpos = np.zeros(self._articulation.dof)
+            qpos[0] = self._articulation_config.init_qpos
+            self._articulation.set_qpos(qpos)
 
-        [[lmin, lmax]] = self._target_joint.get_limits()
-        qpos = np.zeros(self._articulation.dof)
-        qpos[0] = self._articulation_config.init_qpos
-        self._articulation.set_qpos(qpos)
+        '''
+        choose target joint
+        set joint type
+        
+        '''
+        def initialize_task():
+            # joint index
+            self.target_joint_idx = self._articulation_config.target_joint_idx
+            # joint type, prismatic or rotation
+            self.target_joint_type = self._target_joint.type
 
-        self.target_joint_idx = self._articulation_config.target_joint_idx
-        self.target_joint_type = self._target_joint.type
-        self.digital_twin_target_qpos = self._articulation_config.target_qpos
-        self.digital_twin_init_qpos = self._articulation_config.init_qpos
+            # digital twin object (drawer, faucet...) init qpos -> target qpos
+            self.digital_twin_target_qpos = self._articulation_config.target_qpos
+            self.digital_twin_init_qpos = self._articulation_config.init_qpos
 
-        # get digital twin target link center (center translation in the link frame)
-        visual_body = self._target_link.get_visual_bodies()[0]
-        render_shape = visual_body.get_render_shapes()[0]
-        vertices = apply_pose_to_points(
-            render_shape.mesh.vertices * visual_body.scale,
-            self._target_link.get_pose() * visual_body.local_pose,
-        )
-        mesh = np2mesh(vertices, render_shape.mesh.indices.reshape(-1, 3))
-        bbox = mesh.get_oriented_bounding_box()
+            # get digital twin target link center (center translation in the link frame)
+            visual_body = self._target_link.get_visual_bodies()[0]
+            render_shape = visual_body.get_render_shapes()[0]
+            vertices = apply_pose_to_points(
+                render_shape.mesh.vertices * visual_body.scale,
+                self._target_link.get_pose() * visual_body.local_pose,
+            )
+            mesh = np2mesh(vertices, render_shape.mesh.indices.reshape(-1, 3))
+            bbox = mesh.get_oriented_bounding_box()
 
-        target_link_center_pos = bbox.get_center()
-        target_link_frame_pos = self._target_link.get_pose().p
-        target_link_frame_rot = self._target_link.get_pose().to_transformation_matrix()[:3, :3]
-        self._target_link_center_to_frame = np.linalg.inv(target_link_frame_rot) @ (
-                    target_link_center_pos - target_link_frame_pos)
+            target_link_center_pos = bbox.get_center()
+            target_link_frame_pos = self._target_link.get_pose().p
+            target_link_frame_rot = self._target_link.get_pose().to_transformation_matrix()[:3, :3]
+            self._target_link_center_to_frame = np.linalg.inv(target_link_frame_rot) @ (
+                        target_link_center_pos - target_link_frame_pos)
 
-        # get points far from joint axis
-        pointing_dir = vertices - target_link_frame_pos  # 30000 X 3
-        axis_dir = target_link_frame_rot[:, 0]  # 3
-        distance = np.sqrt(np.linalg.norm(pointing_dir, axis=1) ** 2 - np.dot(pointing_dir, axis_dir) ** 2)
-        index = np.argsort(distance)[-3000:]
-        target_link_far_pos = np.mean(vertices[index], axis=0)
-        self._target_link_far_point_to_frame = np.linalg.inv(target_link_frame_rot) @ (
-                    target_link_far_pos - target_link_frame_pos)
+            # get points far from joint axis
+            pointing_dir = vertices - target_link_frame_pos  # 30000 X 3
+            axis_dir = target_link_frame_rot[:, 0]  # 3
+            distance = np.sqrt(np.linalg.norm(pointing_dir, axis=1) ** 2 - np.dot(pointing_dir, axis_dir) ** 2)
+            index = np.argsort(distance)[-3000:]
+            target_link_far_pos = np.mean(vertices[index], axis=0)
+            self._target_link_far_point_to_frame = np.linalg.inv(target_link_frame_rot) @ (
+                        target_link_far_pos - target_link_frame_pos)
 
         # print(target_link_far_pos)
         # print(self._target_link_far_point_to_frame)
@@ -107,33 +124,41 @@ class CEMEnv(FixedXmate3RobotiqEnv):
         # bbox.color = [1,0,0]
         # o3d.visualization.draw_geometries([mesh, bbox])
 
-        # set physical properties for all the joints
-        self._joint_friction_range = (0.8, 1.0)  # if self.target_joint_type=='prismatic' else (0.8, 0.25)
-        self._joint_stiffness_range = (0.0, 0.0)
-        self._joint_damping_range = (20.0, 30.0)  # laptop
-        # self._joint_damping_range = (70.0, 80.0) # drawer
-        # self._joint_damping_range = (4.0, 5.0) # faucet
+        def set_joints():
+            # set physical properties for all the joints
+            self._joint_friction_range = (0.8, 1.0)  # if self.target_joint_type=='prismatic' else (0.8, 0.25)
+            self._joint_stiffness_range = (0.0, 0.0)
+            self._joint_damping_range = (20.0, 30.0)  # laptop
+            # self._joint_damping_range = (70.0, 80.0) # drawer
+            # self._joint_damping_range = (4.0, 5.0) # faucet
 
-        joint_friction = self._episode_rng.uniform(
-            self._joint_friction_range[0], self._joint_friction_range[1]
-        )
-        joint_stiffness = self._episode_rng.uniform(
-            self._joint_stiffness_range[0], self._joint_stiffness_range[1]
-        )
-        joint_damping = self._episode_rng.uniform(
-            self._joint_damping_range[0], self._joint_damping_range[1]
-        )
+            joint_friction = self._episode_rng.uniform(
+                self._joint_friction_range[0], self._joint_friction_range[1]
+            )
+            joint_stiffness = self._episode_rng.uniform(
+                self._joint_stiffness_range[0], self._joint_stiffness_range[1]
+            )
+            joint_damping = self._episode_rng.uniform(
+                self._joint_damping_range[0], self._joint_damping_range[1]
+            )
 
-        for joint in self._articulation.get_active_joints():
-            joint.set_friction(joint_friction)
-            joint.set_drive_property(joint_stiffness, joint_damping)
+            for joint in self._articulation.get_active_joints():
+                print(joint.name)
+                joint.set_friction(joint_friction)
+                joint.set_drive_property(joint_stiffness, joint_damping)
+
+        set_articulation_root_pose()
+        set_articulation_qpos()
+        initialize_task()
+        set_joints()
 
     def _initialize_agent(self):
         # qpos = np.array([1.4, -1.053, -2.394, 1.662, 1.217, 1.05, -0.8, 0.0, 0.0])
         # qpos = np.array([1.302, -0.541, -2.935, 1.440, 1.560, 1.553, -0.804, 0.0, 0.0])
         # qpos = np.array([1.12187,-0.384234,-2.53946,1.12766,1.32165,1.5631,-0.0644407, 0.0, 0.0])
         # qpos = np.array([-0.488665,0.340129,-1.14341,1.18789,0.346452,1.73497,0.7321,0.0,0.0]) # drawer
-        qpos = np.array([-0.488665, 0.340129, -1.14341, 1.18789, 0.346452, 1.73497, -1, 0.0, 0.0])  # laptop and faucet
+        # TODO: agent initial qpos
+        qpos = np.array([-0.488665, 0.340129, -1.14341, 1.18789, 0.346452, 1.73497, -1] + [0.0] * 16)  # laptop and faucet
         # qpos = np.array([-0.488665,0.340129,-1.14341,1.18789,0.346452,1.73497,0.7321,0.0,0.0]) # faucet CW
 
         qpos[:-2] += self._episode_rng.normal(0, 0.02, len(qpos) - 2)
@@ -263,25 +288,25 @@ class CEMEnv(FixedXmate3RobotiqEnv):
 
     def compute_other_flag_dict(self):
         ee_cords = self._agent.sample_ee_coords()  # [2, 10, 3]
-        # current_handle = apply_pose_to_points(
-        #     self._handle_info["pcd"], self._target_link.get_pose()
-        # )  # [200, 3]
-        # ee_to_handle = ee_cords.mean(0)[:, None] - current_handle
-        # dist_ee_to_handle = np.linalg.norm(ee_to_handle, axis=-1).min(-1).mean(-1)
+        current_handle = apply_pose_to_points(
+            self._handle_info["pcd"], self._target_link.get_pose()
+        )  # [200, 3]
+        ee_to_handle = ee_cords.mean(0)[:, None] - current_handle
+        dist_ee_to_handle = np.linalg.norm(ee_to_handle, axis=-1).min(-1).mean(-1)
 
-        # handle_mesh = trimesh.Trimesh(
-        #     vertices=apply_pose_to_points(
-        #         np.asarray(self._handle_info["mesh"].vertices),
-        #         self._target_link.get_pose(),
-        #     ),
-        #     faces=np.asarray(np.asarray(self._handle_info["mesh"].triangles)),
-        # )
+        handle_mesh = trimesh.Trimesh(
+            vertices=apply_pose_to_points(
+                np.asarray(self._handle_info["mesh"].vertices),
+                self._target_link.get_pose(),
+            ),
+            faces=np.asarray(np.asarray(self._handle_info["mesh"].triangles)),
+        )
 
         # handle_obj = trimesh.proximity.ProximityQuery(handle_mesh)
-        # sd_ee_mid_to_handle = handle_obj.signed_distance(ee_cords.mean(0)).max()
-        # sd_ee_to_handle = (
-        #     handle_obj.signed_distance(ee_cords.reshape(-1, 3)).reshape(2, -1).max(1)
-        # )
+        sd_ee_mid_to_handle = handle_obj.signed_distance(ee_cords.mean(0)).max()
+        sd_ee_to_handle = (
+            handle_obj.signed_distance(ee_cords.reshape(-1, 3)).reshape(2, -1).max(1)
+        )
 
         # Grasp = mid close almost in cvx and both sides has similar sign distance.
         close_to_grasp = sd_ee_to_handle.min() > -1e-2
@@ -431,6 +456,220 @@ class CEMEnv(FixedXmate3RobotiqEnv):
             "target_achieved_reward": target_achieved_rew * 20,
             "contact_reward": contact_rew * 10,
             "contact_directi-on_reward": contact_direction_rew * 0.4, # 0.4 # push laptop 0.6, drag laptop  # push drawer: 1.0, drag drawer 0.6
+            "robot_q_vel_reward": robot_q_vel_rew * 0.03,  # 0.03,
+            "robot_q_acc_reward": robot_q_acc_rew * 0.01,  # 0.01,
+            "digital_twin_q_vel_reward:": digital_twin_qvel_rew * 5
+        }
+        reward = sum(reward_dict.values())
+        # print('reward:', reward)
+        info_dict = {}
+        info_dict["digital_twin_target_center"] = digital_twin_target_center
+        info_dict['step_in_ep'] = np.array(self.step_in_ep,
+                                           dtype=float)  # convert to float for visualization in maniskill2_learn
+        info_dict['accumulated_contact_direction_err'] = np.array(self.accumulated_contact_direction_err)
+        for key in reward_dict:
+            info_dict[key] = np.array(reward_dict[key])
+        info_dict['total_reward'] = reward
+        if self.target_joint_type == "prismatic":
+            info_dict['qpos_error(m)'] = np.abs(self.digital_twin_target_qpos - digital_twin_qpos)
+        else:
+            info_dict['qpos_error(deg)'] = np.rad2deg(np.abs(self.digital_twin_target_qpos - digital_twin_qpos))
+        # info_dict['robot_q_vel_rew']=robot_q_vel_rew*0.3
+        # info_dict['robot_q_acc_rew']=robot_q_acc_rew*0.02
+        # info_dict.update(flag_dict)
+        # info_dict.update(other_info)
+        self._cache_info = info_dict
+        return reward
+
+    def compute_dense_reward_basic(self):
+        def reach_rew():
+            # return 0 if stage >= 2 -> digital twin qpos is changed, which means digital twin is reached.
+            if self.digital_twin_init_qpos != self._articulation.get_qpos()[self.target_joint_idx]:
+                return 0
+            # palm pose (location)
+            # TODO: get palm pose
+            grasp_frame_translation = self.grasp_site.get_pose().p
+            # digital twin target centre pose
+            digital_twin_target_pos = self._target_link.get_pose().p
+            digital_twin_target_rot = self._target_link.get_pose().to_transformation_matrix()[:3, :3]
+            digital_twin_target_center = digital_twin_target_rot @ (
+                self._target_link_center_to_frame if self.target_joint_type == "prismatic" else self._target_link_far_point_to_frame) + digital_twin_target_pos
+            # compute reward, [-INF, lambda]
+            reach_reward = np.clip(-np.linalg.norm(grasp_frame_translation - digital_twin_target_center), a_min=-np.inf, a_max=self.thresh_lambda)
+            return reach_reward
+
+        def contact_reward():
+            # return 0 if stage == 1
+            if self.digital_twin_init_qpos == self._articulation.get_qpos()[self.target_joint_idx]:
+                return 0
+            robot_links = self.agent._robot.get_links()
+            articulation_links = self._articulation.get_links()
+            for contact in contacts:
+                # Check if the contact involves the agent and the target joint
+                if (
+                        contact.actor0 in robot_links and contact.actor1 in articulation_links
+                ) or (
+                        contact.actor1 in robot_links and contact.actor0 in articulation_links
+                ):
+                    # Check if the contact involves the agent's fingers and the target joint
+                    if (
+                            (contact.actor0 == self.agent.finger1_link
+                             and contact.actor1 == self.target_link)
+                            or
+                            (contact.actor0 == self.agent.finger2_link
+                             and contact.actor1 == self.target_link)
+                            or
+                            (contact.actor1 == self.agent.finger1_link
+                             and contact.actor0 == self.target_link)
+                            or
+                            (contact.actor1 == self.agent.finger2_link
+                             and contact.actor0 == self.target_link)
+                    ):
+                        # Calculate the contact force
+                        contact_force = []
+                        for point in contact.points:
+                            if contact.actor0 == self.target_link:
+                                contact_force.append(point.impulse * self.sim_freq)
+                            else:
+                                contact_force.append(-point.impulse * self.sim_freq)
+
+                        # If there is any contact force
+                        if len(contact_force):
+                            contact_force = np.vstack(contact_force)
+                            norm = np.linalg.norm(contact_force, axis=1)
+
+                            # Remove zero contact force
+                            contact_force = contact_force[norm > 0]
+
+                            # If there is any non-zero contact force
+                            if len(contact_force):
+                                # If the target joint is closer to the target position than the initial position
+                                # and the target has not been achieved, give a positive contact reward
+                                if np.abs(digital_twin_qpos - self.digital_twin_target_qpos) < np.abs(
+                                        self.digital_twin_init_qpos - self.digital_twin_target_qpos) and not target_achieved_rew:
+                                    contact_rew = 1.0
+                                # If the target has been achieved, give a negative contact reward
+                                if target_achieved_rew:
+                                    contact_rew = -0.5
+                        continue
+
+                    # If the contact involves other parts of the agent and the target joint, give a fixed negative contact reward
+                    contact_rew = -6.0
+                    break
+
+            return 1 if True else 0
+
+        flag_dict = self.compute_eval_flag_dict()
+        target_achieved_rew = flag_dict['target_achieved']
+        digital_twin_qpos = self._articulation.get_qpos()[self.target_joint_idx]
+
+        # contact reward
+        contact_rew = 0.0
+        contacts = self._scene.get_contacts()
+        # contact_force = 0.0
+        for contact in contacts:
+            # Check if the contact involves the agent and the target joint
+            if (
+                    contact.actor0 in self.agent._robot.get_links()
+                    and contact.actor1 in self._articulation.get_links()
+            ) or (
+                    contact.actor1 in self.agent._robot.get_links()
+                    and contact.actor0 in self._articulation.get_links()
+            ):
+                # Check if the contact involves the agent's fingers and the target joint
+                if (
+                        (contact.actor0 == self.agent.finger1_link
+                         and contact.actor1 == self.target_link)
+                        or
+                        (contact.actor0 == self.agent.finger2_link
+                         and contact.actor1 == self.target_link)
+                        or
+                        (contact.actor1 == self.agent.finger1_link
+                         and contact.actor0 == self.target_link)
+                        or
+                        (contact.actor1 == self.agent.finger2_link
+                         and contact.actor0 == self.target_link)
+                ):
+                    # Calculate the contact force
+                    contact_force = []
+                    for point in contact.points:
+                        if contact.actor0 == self.target_link:
+                            contact_force.append(point.impulse * self.sim_freq)
+                        else:
+                            contact_force.append(-point.impulse * self.sim_freq)
+
+                    # If there is any contact force
+                    if len(contact_force):
+                        contact_force = np.vstack(contact_force)
+                        norm = np.linalg.norm(contact_force, axis=1)
+
+                        # Remove zero contact force
+                        contact_force = contact_force[norm > 0]
+
+                        # If there is any non-zero contact force
+                        if len(contact_force):
+                            # If the target joint is closer to the target position than the initial position
+                            # and the target has not been achieved, give a positive contact reward
+                            if np.abs(digital_twin_qpos - self.digital_twin_target_qpos) < np.abs(
+                                    self.digital_twin_init_qpos - self.digital_twin_target_qpos) and not target_achieved_rew:
+                                contact_rew = 1.0
+                            # If the target has been achieved, give a negative contact reward
+                            if target_achieved_rew:
+                                contact_rew = -0.5
+
+                    continue
+
+                # If the contact involves other parts of the agent and the target joint, give a fixed negative contact reward
+                contact_rew = -6.0
+                break
+
+        # contact force reward
+        contact_direction_rew = -self.accumulated_contact_direction_err  # average force per sim step
+        self.accumulated_contact_direction_err = 0.0
+
+        # print contact force debug info
+        # if np.random.rand() < 0.0005:
+        #     print('accumu:', self.accumulated_contact_force)
+        #     print('rew', contact_force_rew)
+
+        # close to digital twin target_link reward
+        grasp_frame_translation = self.grasp_site.get_pose().p
+        digital_twin_target_pos = self._target_link.get_pose().p
+        digital_twin_target_rot = self._target_link.get_pose().to_transformation_matrix()[:3, :3]
+        # digital_twin_target_center = digital_twin_target_rot @ self._target_link_center_to_frame + digital_twin_target_pos
+        digital_twin_target_center = digital_twin_target_rot @ (
+            self._target_link_center_to_frame if self.target_joint_type == "prismatic" else self._target_link_far_point_to_frame) + digital_twin_target_pos
+        close_to_target_link_rew = -np.clip(np.linalg.norm(grasp_frame_translation - digital_twin_target_center) ** 2,
+                                            a_min=0.0, a_max=np.inf)  # move to target_link. [-oo, 0]
+
+        # close to target reward
+        # we want the reward to be constant no matter the difference between target qpos and initial qpos
+        close_to_target_qpos_rew = -np.abs(
+            (digital_twin_qpos - self.digital_twin_target_qpos) /
+            (self.digital_twin_init_qpos - self.digital_twin_target_qpos),
+            dtype=np.float32)
+
+        # q_vel and q_acc punishment
+        robot_q_acc = self.agent._robot.get_qacc()  # [9, ]
+        robot_q_acc_coefficient = np.array([2, 3, 2, 2, 2, 1, 1, 15, 15])  # [9, ]
+        robot_q_acc_rew = -np.sum(np.abs(robot_q_acc) * robot_q_acc_coefficient)
+        robot_q_vel = self.agent._robot.get_qvel()  # [9, ]
+        robot_q_vel_coefficient = np.array([2, 3, 2, 2, 2, 1, 1, 15, 15])  # [9, ]
+        robot_q_vel_rew = -np.sum(np.abs(robot_q_vel) * robot_q_vel_coefficient)
+
+        # digital twin qvel punishment
+        digital_twin_qvel = self.articulation.get_qvel()[self.target_joint_idx]
+        digital_twin_qvel_rew = -np.abs(digital_twin_qvel)
+
+        # attract to initial qpos if success
+
+        reward_dict = {
+            "close_to_digital_twin_reward": close_to_target_link_rew * 10,
+            "close_to_target_reward": close_to_target_qpos_rew * 50,
+            "target_achieved_reward": target_achieved_rew * 20,
+            "contact_reward": contact_rew * 10,
+            "contact_directi-on_reward": contact_direction_rew * 0.4,
+            # 0.4 # push laptop 0.6, drag laptop  # push drawer: 1.0, drag drawer 0.6
             "robot_q_vel_reward": robot_q_vel_rew * 0.03,  # 0.03,
             "robot_q_acc_reward": robot_q_acc_rew * 0.01,  # 0.01,
             "digital_twin_q_vel_reward:": digital_twin_qvel_rew * 5

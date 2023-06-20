@@ -124,6 +124,7 @@ class CEMEnv(FixedXmate3RobotiqEnv):
         )
 
         for joint in self._articulation.get_active_joints():
+            print(joint.name)
             joint.set_friction(joint_friction)
             joint.set_drive_property(joint_stiffness, joint_damping)
 

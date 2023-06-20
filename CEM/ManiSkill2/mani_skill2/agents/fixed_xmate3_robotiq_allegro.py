@@ -19,19 +19,7 @@ from mani_skill2.utils.sapien_utils import (
 class FixedXmate3RobotiqAllegro(BaseAgent):
     def __init__(self, *args, **kwargs):
         super(FixedXmate3RobotiqAllegro, self).__init__(*args, **kwargs)
-        # self.finger1_link: sapien.LinkBase = get_actor_by_name(
-        #     self._robot.get_links(), "left_inner_finger_pad"
-        # )
-        # self.finger2_link: sapien.LinkBase = get_actor_by_name(
-        #     self._robot.get_links(), "right_inner_finger_pad"
-        # )
-        # self.finger_size = (0.03, 0.07, 0.0075)  # values from URDF
-        # self.grasp_site: sapien.Link = get_entity_by_name(
-        #     self._robot.get_links(), "grasp_convenient_link"
-        # )
-        # self.tool_link: sapien.Link = get_entity_by_name(
-        #     self._robot.get_links(), "tool_2"
-        # )
+        # links of allegro hand
         links = self._robot.get_links()
         self.palm_link: sapien.LinkBase = get_actor_by_name(
             links, "palm_link"
@@ -147,7 +135,8 @@ class FixedXmate3RobotiqAllegro(BaseAgent):
     def sample_ee_coords(self, num_sample=10) -> np.ndarray:
         """Uniformly sample points on the two finger meshes. Used for dense reward computation
         return: ee_coords (2, num_sample, 3)"""
-        def get_single_samples(original_size: Tuple, links: List):
+        # uniformly sample points on a box object
+        def sample_box_points(original_size: Tuple, links: List):
             points = (
                 np.arange(num_sample) / (num_sample - 1) - 0.5
             ) * original_size[1]
@@ -159,6 +148,7 @@ class FixedXmate3RobotiqAllegro(BaseAgent):
                 for link in links
             ]
 
+        # uniformly sample points on a sphere object (for fingertips)
         def sample_semi_sphere_points(radius, links: List):
             samples = []
             for _ in range(num_sample):
@@ -177,15 +167,16 @@ class FixedXmate3RobotiqAllegro(BaseAgent):
                 for link in links
             ]
 
-        palm_points = get_single_samples(self.palm_size, [self.palm_link])[0]
-        link0_points, link4_points, link8_points = get_single_samples(self.link0_4_8_size, [self.link0_0, self.link4_0, self.link8_0])
-        link1_points, link5_points, link9_points = get_single_samples(self.link1_5_9_size, [self.link1_0, self.link5_0, self.link9_0])
-        link2_points, link6_points, link10_points = get_single_samples(self.link2_6_10_size, [self.link2_0, self.link6_0, self.link10_0])
-        link3_points, link7_points, link11_points = get_single_samples(self.link3_7_11_size, [self.link3_0, self.link7_0, self.link11_0])
-        link12_points = get_single_samples(self.link12_size, [self.link12_0])
-        link13_points = get_single_samples(self.link13_size, [self.link13_0])
-        link14_points = get_single_samples(self.link14_size, [self.link14_0])
-        link15_points = get_single_samples(self.link15_size, [self.link15_0])
+        palm_points = sample_box_points(self.palm_size, [self.palm_link])[0]
+        link0_points, link4_points, link8_points = sample_box_points(self.link0_4_8_size, [self.link0_0, self.link4_0, self.link8_0])
+        link1_points, link5_points, link9_points = sample_box_points(self.link1_5_9_size, [self.link1_0, self.link5_0, self.link9_0])
+        link2_points, link6_points, link10_points = sample_box_points(self.link2_6_10_size, [self.link2_0, self.link6_0, self.link10_0])
+        link3_points, link7_points, link11_points = sample_box_points(self.link3_7_11_size, [self.link3_0, self.link7_0, self.link11_0])
+        link12_points = sample_box_points(self.link12_size, [self.link12_0])
+        link13_points = sample_box_points(self.link13_size, [self.link13_0])
+        link14_points = sample_box_points(self.link14_size, [self.link14_0])
+        link15_points = sample_box_points(self.link15_size, [self.link15_0])
+        # fingertips
         link3_tip_points, link7_tip_points, link11_tip_points, link15_tip_points = sample_semi_sphere_points(self.finger_tip_radius, [self.link3_0_tip, self.link7_0_tip, self.link11_0_tip, self.link15_0_tip])
 
         ee_coords = np.stack((palm_points, link0_points, link1_points, link2_points, link3_points, link3_tip_points,

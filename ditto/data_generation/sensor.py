@@ -43,7 +43,9 @@ class Sensor(object):
         mat44[:3, 3] = pos      # mat44 is cam2world
         mat44[0, 3] += env.object_position_offset
         self.mat44 = mat44
-        camera_mount_actor.set_pose(Pose.from_transformation_matrix(mat44))
+        real_pos = Pose.from_transformation_matrix(mat44)
+        # print("pos:", pos, "mat44:", mat44, "real_pos", real_pos)
+        camera_mount_actor.set_pose(real_pos)
 
         self.pos = pos
         self.dist = dist

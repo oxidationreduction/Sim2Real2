@@ -227,8 +227,11 @@ if __name__ == '__main__':
     env.load_object(object_urdf_fn, object_material, scale=0.5)
     # setup camera
     # cam = Camera(env, fixed_position=True)
+    print("before")
+    env.take_rgb_picture(None)
     cam = Sensor(env, fixed_position=True)
-    # env.take_rgb_picture(None)
+    print("after")
+    env.take_rgb_picture(None)
     if not args.no_gui:
         # env.set_controller_camera_pose(cam.pos[0], cam.pos[1], cam.pos[2], np.pi+cam.theta, -cam.phi)
         env.set_controller_camera_pose(1.0, 0.0, 1.2, np.pi, -0.5)
@@ -289,7 +292,7 @@ if __name__ == '__main__':
         clean_depth, stereo_depth, rgb = cam.get_observation()
         intrinsics = cam.get_intrinsic()
         extrinsics = cam.get_extrinsic()
-
+        print("extrinsics:", extrinsics)
         intrinsics_o3d = o3d.camera.PinholeCameraIntrinsic()
         intrinsics_o3d.intrinsic_matrix = intrinsics
 
