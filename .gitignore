@@ -7,3 +7,4 @@ imgui.ini
 /ditto/assets/original_sapien_dataset/
 /ditto/data
 /ditto/logs
+/ditto/*.ckpt
