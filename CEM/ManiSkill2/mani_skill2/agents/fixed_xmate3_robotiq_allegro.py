@@ -94,6 +94,13 @@ class FixedXmate3RobotiqAllegro(BaseAgent):
         self.link15_0_tip: sapien.LinkBase = get_actor_by_name(
             links, "link_15.0_tip"
         )
+    def get_finger_links(self):
+        return [
+            [self.link0_0, self.link1_0, self.link2_0, self.link3_0, self.link3_0_tip],
+            [self.link4_0, self.link5_0, self.link6_0, self.link7_0, self.link7_0_tip],
+            [self.link8_0, self.link9_0, self.link10_0, self.link11_0, self.link11_0_tip],
+            [self.link12_0, self.link13_0, self.link14_0, self.link15_0, self.link15_0_tip],
+        ]
 
     def get_proprioception(self):
         state_dict = OrderedDict()

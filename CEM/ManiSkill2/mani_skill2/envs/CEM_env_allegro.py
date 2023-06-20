@@ -57,6 +57,7 @@ class CEMAllegroEnv(FixedXmate3RobotiqAllegroEnv):
             articulation_config_path, obs_mode, reward_mode, sim_freq, control_freq
         )
         self.thresh_lambda = thresh_lambda
+        self.operation_stage = 1
 
     def _initialize_articulation(self):
         def set_articulation_root_pose():
@@ -70,6 +71,7 @@ class CEMAllegroEnv(FixedXmate3RobotiqAllegroEnv):
                     [np.sqrt(1 - rot_z ** 2), 0, 0, rot_z],
                 )
             )
+
         def set_articulation_qpos():
             [[lmin, lmax]] = self._target_joint.get_limits()
             qpos = np.zeros(self._articulation.dof)
@@ -81,6 +83,7 @@ class CEMAllegroEnv(FixedXmate3RobotiqAllegroEnv):
         set joint type
         
         '''
+
         def initialize_task():
             # joint index
             self.target_joint_idx = self._articulation_config.target_joint_idx
@@ -105,7 +108,7 @@ class CEMAllegroEnv(FixedXmate3RobotiqAllegroEnv):
             target_link_frame_pos = self._target_link.get_pose().p
             target_link_frame_rot = self._target_link.get_pose().to_transformation_matrix()[:3, :3]
             self._target_link_center_to_frame = np.linalg.inv(target_link_frame_rot) @ (
-                        target_link_center_pos - target_link_frame_pos)
+                    target_link_center_pos - target_link_frame_pos)
 
             # get points far from joint axis
             pointing_dir = vertices - target_link_frame_pos  # 30000 X 3
@@ -114,7 +117,7 @@ class CEMAllegroEnv(FixedXmate3RobotiqAllegroEnv):
             index = np.argsort(distance)[-3000:]
             target_link_far_pos = np.mean(vertices[index], axis=0)
             self._target_link_far_point_to_frame = np.linalg.inv(target_link_frame_rot) @ (
-                        target_link_far_pos - target_link_frame_pos)
+                    target_link_far_pos - target_link_frame_pos)
 
         # print(target_link_far_pos)
         # print(self._target_link_far_point_to_frame)
@@ -158,7 +161,8 @@ class CEMAllegroEnv(FixedXmate3RobotiqAllegroEnv):
         # qpos = np.array([1.12187,-0.384234,-2.53946,1.12766,1.32165,1.5631,-0.0644407, 0.0, 0.0])
         # qpos = np.array([-0.488665,0.340129,-1.14341,1.18789,0.346452,1.73497,0.7321,0.0,0.0]) # drawer
         # TODO: agent initial qpos
-        qpos = np.array([-0.488665, 0.340129, -1.14341, 1.18789, 0.346452, 1.73497, -1] + [0.0] * 16)  # laptop and faucet
+        qpos = np.array(
+            [-0.488665, 0.340129, -1.14341, 1.18789, 0.346452, 1.73497, -1] + [0.0] * 16)  # laptop and faucet
         # qpos = np.array([-0.488665,0.340129,-1.14341,1.18789,0.346452,1.73497,0.7321,0.0,0.0]) # faucet CW
 
         qpos[:-2] += self._episode_rng.normal(0, 0.02, len(qpos) - 2)
@@ -455,7 +459,8 @@ class CEMAllegroEnv(FixedXmate3RobotiqAllegroEnv):
             "close_to_target_reward": close_to_target_qpos_rew * 50,
             "target_achieved_reward": target_achieved_rew * 20,
             "contact_reward": contact_rew * 10,
-            "contact_directi-on_reward": contact_direction_rew * 0.4, # 0.4 # push laptop 0.6, drag laptop  # push drawer: 1.0, drag drawer 0.6
+            "contact_directi-on_reward": contact_direction_rew * 0.4,
+            # 0.4 # push laptop 0.6, drag laptop  # push drawer: 1.0, drag drawer 0.6
             "robot_q_vel_reward": robot_q_vel_rew * 0.03,  # 0.03,
             "robot_q_acc_reward": robot_q_acc_rew * 0.01,  # 0.01,
             "digital_twin_q_vel_reward:": digital_twin_qvel_rew * 5
@@ -484,7 +489,10 @@ class CEMAllegroEnv(FixedXmate3RobotiqAllegroEnv):
     def compute_dense_reward_basic(self):
         def reach_rew():
             # return 0 if stage >= 2 -> digital twin qpos is changed, which means digital twin is reached.
-            if self.digital_twin_init_qpos != self._articulation.get_qpos()[self.target_joint_idx]:
+            # if self.digital_twin_init_qpos != self._articulation.get_qpos()[self.target_joint_idx]:
+            #     self.operation_stage = 2
+            #     return 0
+            if self.operation_stage > 1:
                 return 0
             # palm pose (location)
             # TODO: get palm pose
@@ -495,15 +503,29 @@ class CEMAllegroEnv(FixedXmate3RobotiqAllegroEnv):
             digital_twin_target_center = digital_twin_target_rot @ (
                 self._target_link_center_to_frame if self.target_joint_type == "prismatic" else self._target_link_far_point_to_frame) + digital_twin_target_pos
             # compute reward, [-INF, lambda]
-            reach_reward = np.clip(-np.linalg.norm(grasp_frame_translation - digital_twin_target_center), a_min=-np.inf, a_max=self.thresh_lambda)
+            reach_reward = np.clip(-np.linalg.norm(grasp_frame_translation - digital_twin_target_center), a_min=-np.inf,
+                                   a_max=self.thresh_lambda)
             return reach_reward
 
         def contact_reward():
             # return 0 if stage == 1
-            if self.digital_twin_init_qpos == self._articulation.get_qpos()[self.target_joint_idx]:
+            if self.operation_stage == 1:
                 return 0
+
+            # contact list, return 0 if empty (no contact), otherwise stage = 2
+            contacts = self._scene.get_contacts()
+            if len(contacts) == 0:
+                return 0
+            self.operation_stage = 2
+
             robot_links = self.agent._robot.get_links()
             articulation_links = self._articulation.get_links()
+
+            # Palm-target contact flag
+            palm_flag = False
+            # Finger-target contact set, recording indices for contacted fingers.
+            touched_fingers = set()
+
             for contact in contacts:
                 # Check if the contact involves the agent and the target joint
                 if (
@@ -511,117 +533,38 @@ class CEMAllegroEnv(FixedXmate3RobotiqAllegroEnv):
                 ) or (
                         contact.actor1 in robot_links and contact.actor0 in articulation_links
                 ):
-                    # Check if the contact involves the agent's fingers and the target joint
-                    if (
-                            (contact.actor0 == self.agent.finger1_link
-                             and contact.actor1 == self.target_link)
-                            or
-                            (contact.actor0 == self.agent.finger2_link
-                             and contact.actor1 == self.target_link)
-                            or
-                            (contact.actor1 == self.agent.finger1_link
-                             and contact.actor0 == self.target_link)
-                            or
-                            (contact.actor1 == self.agent.finger2_link
-                             and contact.actor0 == self.target_link)
-                    ):
-                        # Calculate the contact force
-                        contact_force = []
-                        for point in contact.points:
-                            if contact.actor0 == self.target_link:
-                                contact_force.append(point.impulse * self.sim_freq)
-                            else:
-                                contact_force.append(-point.impulse * self.sim_freq)
+                    contact_actors = {contact.actor0, contact.actor1}
+                    # Palm
+                    if {self.agent.palm_link, self.target_link}.__eq__(contact_actors):
+                        palm_flag = True
+                    # Fingers
+                    else:
+                        for index, finger in enumerate(self.agent.get_finger_links()):
+                            for link in finger:
+                                if {link, self.target_link}.__eq__(contact_actors):
+                                    touched_fingers.add(index)
+            if palm_flag and len(touched_fingers) >= 2:
+                self.operation_stage = 3
+                return 1
+            else:
+                return 0
 
-                        # If there is any contact force
-                        if len(contact_force):
-                            contact_force = np.vstack(contact_force)
-                            norm = np.linalg.norm(contact_force, axis=1)
+        def progress_reward():
+            if self.operation_stage != 3:
+                return 0
+            digital_twin_qpos = self._articulation.get_qpos()[self.target_joint_idx]
+            progress_rew = -np.abs(
+                (digital_twin_qpos - self.digital_twin_target_qpos) /
+                (self.digital_twin_init_qpos - self.digital_twin_target_qpos),
+                dtype=np.float32)
+            return progress_rew
 
-                            # Remove zero contact force
-                            contact_force = contact_force[norm > 0]
+        def penalty_term():
 
-                            # If there is any non-zero contact force
-                            if len(contact_force):
-                                # If the target joint is closer to the target position than the initial position
-                                # and the target has not been achieved, give a positive contact reward
-                                if np.abs(digital_twin_qpos - self.digital_twin_target_qpos) < np.abs(
-                                        self.digital_twin_init_qpos - self.digital_twin_target_qpos) and not target_achieved_rew:
-                                    contact_rew = 1.0
-                                # If the target has been achieved, give a negative contact reward
-                                if target_achieved_rew:
-                                    contact_rew = -0.5
-                        continue
-
-                    # If the contact involves other parts of the agent and the target joint, give a fixed negative contact reward
-                    contact_rew = -6.0
-                    break
-
-            return 1 if True else 0
 
         flag_dict = self.compute_eval_flag_dict()
         target_achieved_rew = flag_dict['target_achieved']
         digital_twin_qpos = self._articulation.get_qpos()[self.target_joint_idx]
-
-        # contact reward
-        contact_rew = 0.0
-        contacts = self._scene.get_contacts()
-        # contact_force = 0.0
-        for contact in contacts:
-            # Check if the contact involves the agent and the target joint
-            if (
-                    contact.actor0 in self.agent._robot.get_links()
-                    and contact.actor1 in self._articulation.get_links()
-            ) or (
-                    contact.actor1 in self.agent._robot.get_links()
-                    and contact.actor0 in self._articulation.get_links()
-            ):
-                # Check if the contact involves the agent's fingers and the target joint
-                if (
-                        (contact.actor0 == self.agent.finger1_link
-                         and contact.actor1 == self.target_link)
-                        or
-                        (contact.actor0 == self.agent.finger2_link
-                         and contact.actor1 == self.target_link)
-                        or
-                        (contact.actor1 == self.agent.finger1_link
-                         and contact.actor0 == self.target_link)
-                        or
-                        (contact.actor1 == self.agent.finger2_link
-                         and contact.actor0 == self.target_link)
-                ):
-                    # Calculate the contact force
-                    contact_force = []
-                    for point in contact.points:
-                        if contact.actor0 == self.target_link:
-                            contact_force.append(point.impulse * self.sim_freq)
-                        else:
-                            contact_force.append(-point.impulse * self.sim_freq)
-
-                    # If there is any contact force
-                    if len(contact_force):
-                        contact_force = np.vstack(contact_force)
-                        norm = np.linalg.norm(contact_force, axis=1)
-
-                        # Remove zero contact force
-                        contact_force = contact_force[norm > 0]
-
-                        # If there is any non-zero contact force
-                        if len(contact_force):
-                            # If the target joint is closer to the target position than the initial position
-                            # and the target has not been achieved, give a positive contact reward
-                            if np.abs(digital_twin_qpos - self.digital_twin_target_qpos) < np.abs(
-                                    self.digital_twin_init_qpos - self.digital_twin_target_qpos) and not target_achieved_rew:
-                                contact_rew = 1.0
-                            # If the target has been achieved, give a negative contact reward
-                            if target_achieved_rew:
-                                contact_rew = -0.5
-
-                    continue
-
-                # If the contact involves other parts of the agent and the target joint, give a fixed negative contact reward
-                contact_rew = -6.0
-                break
 
         # contact force reward
         contact_direction_rew = -self.accumulated_contact_direction_err  # average force per sim step
@@ -673,6 +616,12 @@ class CEMAllegroEnv(FixedXmate3RobotiqAllegroEnv):
             "robot_q_vel_reward": robot_q_vel_rew * 0.03,  # 0.03,
             "robot_q_acc_reward": robot_q_acc_rew * 0.01,  # 0.01,
             "digital_twin_q_vel_reward:": digital_twin_qvel_rew * 5
+        }
+        reward_dict = {
+            "reach_reward": reach_rew(),
+            "contact_reward": contact_reward(),
+            "progress_reward": progress_reward(),
+            "penalty": penalty_term()
         }
         reward = sum(reward_dict.values())
         # print('reward:', reward)

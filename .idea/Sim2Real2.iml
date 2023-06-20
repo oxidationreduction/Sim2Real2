@@ -8,7 +8,7 @@
       <excludeFolder url="file://$MODULE_DIR$/ditto/logs" />
       <excludeFolder url="file://$MODULE_DIR$/ditto/data" />
     </content>
-    <orderEntry type="jdk" jdkName="CEM" jdkType="Python SDK" />
+    <orderEntry type="jdk" jdkName="Ditto" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />
   </component>
   <component name="PyDocumentationSettings">
