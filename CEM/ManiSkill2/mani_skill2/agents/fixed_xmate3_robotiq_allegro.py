@@ -95,6 +95,13 @@ class FixedXmate3RobotiqAllegro(BaseAgent):
             links, "link_15.0_tip"
         )
     def get_finger_links(self):
+        # configure fingers
+        # TODO: modify finger lists by below
+        finger_tip_names = ["link_15.0_tip", "link_3.0_tip", "link_7.0_tip", "link_11.0_tip"]
+        thumb_link_name = ["link_15.0_tip", "link_15.0", "link_14.0"]
+        index_link_name = ["link_3.0_tip", "link_3.0", "link_2.0", "link_1.0"]
+        middle_link_name = ["link_7.0_tip", "link_7.0", "link_6.0", "link_5.0"]
+        ring_link_name = ["link_11.0_tip", "link_11.0", "link_10.0", "link_9.0"]
         return [
             [self.link0_0, self.link1_0, self.link2_0, self.link3_0, self.link3_0_tip],
             [self.link4_0, self.link5_0, self.link6_0, self.link7_0, self.link7_0_tip],

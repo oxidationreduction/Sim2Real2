@@ -25,6 +25,12 @@ from mani_skill2.utils.sapien_utils import (
     set_articulation_state,
 )
 
+
+def recover_action(action, limit):
+    action = (action + 1) / 2 * (limit[:, 1] - limit[:, 0]) + limit[:, 0]
+    return action
+    
+
 @attr.s(auto_attribs=True, kw_only=True)
 class DigitalTwinConfig:
     name: str
@@ -53,6 +59,9 @@ class FixedXmate3RobotiqAllegroEnv(BaseEnv):
         control_freq=20,
     ):
         # articulation
+        self.velocity_limit = np.array([1] * 3 + [1] * 3 + [np.pi] * 16)    # 16 -> hand_dof
+        self.ee_link_last_pose = None
+        self.cartesian_error = None
         with open(articulation_config_path, "r") as f:
             config_dict = yaml.safe_load(f)
             self._articulation_config = DigitalTwinConfig(**config_dict)
@@ -254,6 +263,8 @@ class FixedXmate3RobotiqAllegroEnv(BaseEnv):
             self._agent_actor_ids.append(actor.id)
 
         self._agent_actor_ids = np.array(self._agent_actor_ids).astype(int)
+        # TODO: which is ee_link or end_link
+        self.ee_link_last_pose = self.agent.palm_link.get_pose()
 
     def _initialize_articulation(self):
         raise NotImplementedError
@@ -332,6 +343,14 @@ class FixedXmate3RobotiqAllegroEnv(BaseEnv):
         reward = self.get_reward()
         done = self.get_done()
         info = self.get_info()
+
+        # Calculate cartesian_error by ee_link relative pose, then update ee_link_last_pose
+        ee_link_new_pose = self.agent.palm_link.get_pose()
+        relative_pos = ee_link_new_pose.p - self.ee_link_last_pose.p
+        target_root_velocity = recover_action(action[:6], self.velocity_limit[:6])
+        self.cartesian_error = np.linalg.norm(relative_pos - target_root_velocity[:3] * self.control_time_step)
+        self.ee_link_last_pose = ee_link_new_pose
+
         return obs, reward, done, info
 
     # ---------------------------------------------------------------------------- #

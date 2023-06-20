@@ -5,6 +5,7 @@ from typing import Dict
 import numpy as np
 import sapien.core as sapien
 import trimesh
+from deprecate import deprecated
 
 from sapien.core import Pose
 
@@ -58,6 +59,7 @@ class CEMAllegroEnv(FixedXmate3RobotiqAllegroEnv):
         )
         self.thresh_lambda = thresh_lambda
         self.operation_stage = 1
+        self.is_contact = False
 
     def _initialize_articulation(self):
         def set_articulation_root_pose():
@@ -360,6 +362,7 @@ class CEMAllegroEnv(FixedXmate3RobotiqAllegroEnv):
         flag_dict = self.compute_eval_flag_dict()
         return flag_dict["success"]
 
+    @deprecated
     def compute_dense_reward(self):
         flag_dict = self.compute_eval_flag_dict()
         target_achieved_rew = flag_dict['target_achieved']
@@ -511,12 +514,10 @@ class CEMAllegroEnv(FixedXmate3RobotiqAllegroEnv):
             # return 0 if stage == 1
             if self.operation_stage == 1:
                 return 0
-
-            # contact list, return 0 if empty (no contact), otherwise stage = 2
+            # contact list, return 0 if empty (no contact)
             contacts = self._scene.get_contacts()
             if len(contacts) == 0:
                 return 0
-            self.operation_stage = 2
 
             robot_links = self.agent._robot.get_links()
             articulation_links = self._articulation.get_links()
@@ -546,8 +547,7 @@ class CEMAllegroEnv(FixedXmate3RobotiqAllegroEnv):
             if palm_flag and len(touched_fingers) >= 2:
                 self.operation_stage = 3
                 return 1
-            else:
-                return 0
+            return 0
 
         def progress_reward():
             if self.operation_stage != 3:
@@ -560,7 +560,9 @@ class CEMAllegroEnv(FixedXmate3RobotiqAllegroEnv):
             return progress_rew
 
         def penalty_term():
-
+            action_penalty = np.sum(np.clip(self.agent._robot.get_qvel(), -1, 1) ** 2) * 0.01
+            controller_penalty = (self.cartesian_error ** 2) * 1e3
+            return action_penalty + controller_penalty
 
         flag_dict = self.compute_eval_flag_dict()
         target_achieved_rew = flag_dict['target_achieved']
